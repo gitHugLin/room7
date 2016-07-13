@@ -5,6 +5,8 @@
 #include "WDRInterface.h"
 using namespace wdr;
 
+#define UP_DOWN
+
 static double work_begin = 0;
 static double work_end = 0;
 static double gTime = 0;
@@ -209,6 +211,92 @@ void wdrBase::toneMapping() {
   // workEnd("TONEMAPPING TIME:");
 }
 
+void wdrBase::toneMappingUneven() {
+
+  UINT32 nCols = mWidth, nRows = mHeight;
+  INT32 x = 0, y = 0;
+  UINT8 *pGray = NULL;
+  UINT32 blockAvgLumi = 0;
+  UINT32 *pIntegral = mIntegralImage;
+  pGray = mSrcImage;
+  UINT32 yLimit = nRows / 2;
+  for (y = 0; y < nRows; y = y + 2) {
+    for (x = 0; x < nCols; x++) {
+
+      UINT32 xMin = wdrMax(x - mBlkSize, 0);
+      UINT32 yMin = wdrMax(y - mBlkSize, 0);
+      UINT32 xMax = wdrMin(x + mBlkSize, nCols - 1);
+      UINT32 yMax = wdrMin(y + mBlkSize, nRows - 1);
+      //   UINT32 yMax = y + mBlkSize;
+
+      INT32 yMaxOffset = yMax * nCols;
+      INT32 yMinOffset = yMin * nCols;
+
+      INT32 pRB = xMax + yMaxOffset;
+      INT32 pLB = xMin + yMaxOffset;
+      INT32 pRT = xMax + yMinOffset;
+      INT32 pLT = xMin + yMinOffset;
+
+      blockAvgLumi = *(pIntegral + pRB) - *(pIntegral + pLB) -
+                     *(pIntegral + pRT) + *(pIntegral + pLT);
+
+      blockAvgLumi = blockAvgLumi >> 12;
+      //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
+
+      UINT32 offsetGray = y * nCols + x;
+      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexY = *(pGray + offsetGray);
+      int finalPixel = mToneMapLut[indexY][indexX];
+      UINT32 curPixel = wdrMin(finalPixel, 255);
+      *(pGray + offsetGray) = curPixel;
+    }
+  }
+}
+
+void wdrBase::toneMappingEven() {
+
+  UINT32 nCols = mWidth, nRows = mHeight;
+  INT32 x = 0, y = 0;
+  UINT8 *pGray = NULL;
+  UINT32 blockAvgLumi = 0;
+  // UINT32 *pIntegral = mIntegralImage + nCols * nRows / 2;
+  UINT32 *pIntegral = mIntegralImage;
+  // pGray = mSrcImage + nCols * nRows / 2;
+  pGray = mSrcImage;
+  UINT32 yLimit = nRows / 2;
+  for (y = 1; y < nRows; y = y + 2) {
+    for (x = 0; x < nCols; x++) {
+
+      UINT32 xMin = wdrMax(x - mBlkSize, 0);
+      //   UINT32 yMin = y - mBlkSize;
+      UINT32 yMin = wdrMax(y - mBlkSize, 0);
+      UINT32 xMax = wdrMin(x + mBlkSize, nCols - 1);
+      UINT32 yMax = wdrMin(y + mBlkSize, nRows - 1);
+
+      INT32 yMaxOffset = yMax * nCols;
+      INT32 yMinOffset = yMin * nCols;
+
+      INT32 pRB = xMax + yMaxOffset;
+      INT32 pLB = xMin + yMaxOffset;
+      INT32 pRT = xMax + yMinOffset;
+      INT32 pLT = xMin + yMinOffset;
+
+      blockAvgLumi = *(pIntegral + pRB) - *(pIntegral + pLB) -
+                     *(pIntegral + pRT) + *(pIntegral + pLT);
+
+      blockAvgLumi = blockAvgLumi >> 12;
+      //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
+
+      UINT32 offsetGray = y * nCols + x;
+      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexY = *(pGray + offsetGray);
+      int finalPixel = mToneMapLut2[indexY][indexX];
+      UINT32 curPixel = wdrMin(finalPixel, 255);
+      *(pGray + offsetGray) = curPixel;
+    }
+  }
+}
+
 void wdrBase::toneMappingThread1() {
 
   UINT32 nCols = mWidth, nRows = mHeight;
@@ -301,7 +389,11 @@ void wdrBase::MutilToneMapping() {
 
 void wdrBase::run() {
   if (is_equals(thFirst)) {
+#ifdef UP_DOWN
     toneMappingThread1();
+#else
+    toneMappingUneven();
+#endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
     if (mSignal == 2) {
@@ -311,8 +403,11 @@ void wdrBase::run() {
     pthread_mutex_unlock(&g_mutex);
 
   } else if (is_equals(this)) {
+#ifdef UP_DOWN
     toneMappingThread2();
-    // toneMapping();
+#else
+    toneMappingEven();
+#endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
     if (mSignal == 2) {

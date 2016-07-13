@@ -66,6 +66,8 @@ private:
   void run();
   void toneMappingThread1();
   void toneMappingThread2();
+  void toneMappingUneven();
+  void toneMappingEven();
   void MutilToneMapping();
   void fastIntegral();
   void toneMapping();
