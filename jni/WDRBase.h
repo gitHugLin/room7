@@ -55,7 +55,12 @@ private:
 private:
   float mToneMapLut[256][256];
   float mToneMapLut2[256][256];
+  float mToneMapLut3[256][256];
+  float mToneMapLut4[256][256];
   float mGainLut[256][256];
+  float mGainLut2[256][256];
+  float mGainLut3[256][256];
+  float mGainLut4[256][256];
 
 private:
   INT32 mSignal;

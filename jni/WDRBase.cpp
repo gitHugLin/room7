@@ -47,6 +47,15 @@ wdrBase::wdrBase() {
   mColumnSum = NULL;
   mInitialized = false;
   thFirst = NULL;
+  thSecond = NULL;
+  thThird = NULL;
+  /*
+  *  以下bl,pl,offset 的定义域均在 0~1 之间
+  *  bl 当前像素的背景平均亮度值；pl 当前像素的亮度值；offset 增益值的微调值
+  *  gain = (1+offset+bl*pl)/(offset+bl*pl) 该公式对在bl,pl同时很小时，
+  *  即在地灰度值时，动态范围大，图像对比度高，而在高灰度值时，gain值很小，保持高灰度区的动态范围
+  *  offset 增大gain值变小，offset 变小，gain值增大
+  */
   for (int y = 0; y < 256; y++)
     for (int x = 0; x < 256; x++) {
       float lumiBlk = (float)x / 255, lumiPixel = (float)y / 255;
@@ -54,9 +63,14 @@ wdrBase::wdrBase() {
                           (lumiBlk + lumiPixel + mGainOffset);
       //避免查表是内存竞争冲突
       mToneMapLut2[y][x] = mToneMapLut[y][x];
+      mToneMapLut3[y][x] = mToneMapLut[y][x];
+      mToneMapLut4[y][x] = mToneMapLut[y][x];
 #ifdef _VU_
       mGainLut[y][x] = (1 + mGainOffset + lumiBlk * lumiPixel) /
                        (lumiBlk + lumiPixel + mGainOffset);
+      mGainLut2[y][x] = mGainLut[y][x];
+      mGainLut3[y][x] = mGainLut[y][x];
+      mGainLut4[y][x] = mGainLut[y][x];
 #endif
     }
 
@@ -344,9 +358,9 @@ void wdrBase::toneMappingThread1() {
       //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
 
       UINT32 offsetGray = y * nCols + x;
-      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut[indexY][indexX];
+      INT32 finalPixel = mToneMapLut[indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 
@@ -402,14 +416,14 @@ void wdrBase::toneMappingThread2() {
       //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
 
       UINT32 offsetGray = y * nCols + x;
-      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut2[indexY][indexX];
+      INT32 finalPixel = mToneMapLut2[indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut[indexY][indexX];
+        float gain = mGainLut2[indexY][indexX];
         INT32 V = gain * (*pVU - 128);
         *pVU = wdrMin(V + 128, 255);
         pVU++;
@@ -459,14 +473,14 @@ void wdrBase::toneMappingThread3() {
       //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
 
       UINT32 offsetGray = y * nCols + x;
-      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut2[indexY][indexX];
+      INT32 finalPixel = mToneMapLut3[indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut[indexY][indexX];
+        float gain = mGainLut3[indexY][indexX];
         INT32 V = gain * (*pVU - 128);
         *pVU = wdrMin(V + 128, 255);
         pVU++;
@@ -516,14 +530,14 @@ void wdrBase::toneMappingThread4() {
       //   blockAvgLumi = blockAvgLumi / ((yMax - yMin + 1) * (xMax - xMin +1));
 
       UINT32 offsetGray = y * nCols + x;
-      UINT32 indexX = (int)blockAvgLumi;
+      UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut2[indexY][indexX];
+      INT32 finalPixel = mToneMapLut4[indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut[indexY][indexX];
+        float gain = mGainLut4[indexY][indexX];
         INT32 V = gain * (*pVU - 128);
         *pVU = wdrMin(V + 128, 255);
         pVU++;
