@@ -44,6 +44,8 @@ public:
 
 private:
   MyThread *thFirst;
+  MyThread *thSecond;
+  MyThread *thThird;
   UCHAR *mSrcImage;
   UINT32 *mIntegralImage;
   UINT32 *mColumnSum;
@@ -53,6 +55,7 @@ private:
 private:
   float mToneMapLut[256][256];
   float mToneMapLut2[256][256];
+  float mGainLut[256][256];
 
 private:
   INT32 mSignal;
@@ -66,6 +69,8 @@ private:
   void run();
   void toneMappingThread1();
   void toneMappingThread2();
+  void toneMappingThread3();
+  void toneMappingThread4();
   void toneMappingUneven();
   void toneMappingEven();
   void MutilToneMapping();
