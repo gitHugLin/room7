@@ -5,9 +5,6 @@
 #include "WDRInterface.h"
 using namespace wdr;
 
-#define _UP_DOWN_
-#define _VU_
-
 static double work_begin = 0;
 static double work_end = 0;
 static double gTime = 0;
@@ -40,37 +37,39 @@ wdrBase::wdrBase() {
   mWidth = 0;
   mHeight = 0;
   mBlkSize = 31;
-  mGainOffset = 0.3;
+  mGainOffset = __global_GainOffset;
+  // mVuGainOffset = __global_VuGainOffset;
   mIntegralImage = NULL;
   mSrcData = NULL;
   mSrcImage = NULL;
   mColumnSum = NULL;
   mInitialized = false;
-  thFirst = NULL;
-  thSecond = NULL;
-  thThird = NULL;
+
+  for (size_t i = 0; i < 3; i++) {
+    mThread[i] = NULL;
+  }
   /*
   *  以下bl,pl,offset 的定义域均在 0~1 之间
   *  bl 当前像素的背景平均亮度值；pl 当前像素的亮度值；offset 增益值的微调值
-  *  gain = (1+offset+bl*pl)/(offset+bl*pl) 该公式对在bl,pl同时很小时，
-  *  即在地灰度值时，动态范围大，图像对比度高，而在高灰度值时，gain值很小，保持高灰度区的动态范围
+  *  gain = (1+bl*pl)/(offset+bl*pl) 该公式对在bl,pl同时很小时，
+  *  即在地灰度值时，动态范围大，图像对比度高，而在高灰度值时，gain值很小
   *  offset 增大gain值变小，offset 变小，gain值增大
   */
   for (int y = 0; y < 256; y++)
     for (int x = 0; x < 256; x++) {
       float lumiBlk = (float)x / 255, lumiPixel = (float)y / 255;
-      mToneMapLut[y][x] = y * (1 + mGainOffset + lumiBlk * lumiPixel) /
-                          (lumiBlk + lumiPixel + mGainOffset);
+      float gain =
+          (1 + lumiBlk * lumiPixel) / (lumiBlk + lumiPixel + mGainOffset);
       //避免查表是内存竞争冲突
-      mToneMapLut2[y][x] = mToneMapLut[y][x];
-      mToneMapLut3[y][x] = mToneMapLut[y][x];
-      mToneMapLut4[y][x] = mToneMapLut[y][x];
+      for (int i = 0; i < __global_thNums + 1; i++) {
+        mToneMapLut[i][y][x] = y * gain;
+      }
 #ifdef _VU_
-      mGainLut[y][x] = (1 + mGainOffset + lumiBlk * lumiPixel) /
-                       (lumiBlk + lumiPixel + mGainOffset);
-      mGainLut2[y][x] = mGainLut[y][x];
-      mGainLut3[y][x] = mGainLut[y][x];
-      mGainLut4[y][x] = mGainLut[y][x];
+      float vuGain =
+          (1 + lumiBlk * lumiPixel) / (lumiBlk + lumiPixel + mGainOffset);
+      for (int i = 0; i < __global_thNums + 1; i++) {
+        mGainLut[i][y][x] = vuGain;
+      }
 #endif
     }
 
@@ -91,9 +90,9 @@ wdrBase::~wdrBase() {
     delete[] mSrcData;
     mSrcData = NULL;
   }
-  thFirst = NULL;
-  thSecond = NULL;
-  thThird = NULL;
+  for (size_t i = 0; i < 3; i++) {
+    mThread[i] = NULL;
+  }
   pthread_mutex_destroy(&g_mutex);
   sem_destroy(&sem_id);
 }
@@ -117,9 +116,13 @@ bool wdrBase::loadData(int data, int mode, string imagePath) {
   case WDR_INPUT_STREAM: {
     // LOGE("WDR mode is loading Data!");
     UCHAR *srcData = (UCHAR *)data;
+#ifdef _MEMCPY_
     memcpy(mSrcData, srcData, mWidth * mHeight * 3 / 2 * sizeof(UCHAR));
     // mSrcImage = (UCHAR *)data;
     mSrcImage = mSrcData;
+#else
+    mSrcImage = srcData;
+#endif
   } break;
   // case WDR_INPUT_YUV: {
   //   LOGD("input yuv.\n");
@@ -182,7 +185,7 @@ void wdrBase::toneMapping() {
   pGray = mSrcImage;
 
   for (y = 0; y < nRows; y++) {
-    for (x = 0; x < nCols; x = x + 1) {
+    for (x = 0; x < nCols; x) {
 
       UINT32 xMin = wdrMax(x - mBlkSize, 0);
       UINT32 yMin = wdrMax(y - mBlkSize, 0);
@@ -211,21 +214,21 @@ void wdrBase::toneMapping() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = (int)blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut[indexY][indexX];
+      int finalPixel = mToneMapLut[0][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 
-      //   blockAvgLumi = *(pIntegral + xMax + yMaxOffset + 1) -
-      //                  *(pIntegral + xMin + yMaxOffset + 1) -
-      //                  *(pIntegral + xMax + yMinOffset + 1) +
-      //                  *(pIntegral + xMin + yMinOffset + 1);
-      //
-      //   blockAvgLumi = blockAvgLumi >> 10; // 1024 = 32*32
-      //   indexX = (int)blockAvgLumi;
-      //   indexY = *(pGray + offsetGray + 1);
-      //   finalPixel = mToneMapLut[indexY][indexX];
-      //   curPixel = wdrMin(finalPixel, 255);
-      //   *(pGray + offsetGray + 1) = curPixel;
+#ifdef _VU_
+      if (0x1 & y && 0x1 & x) {
+        float gain = mGainLut[0][indexY][indexX];
+        INT32 V = gain * (*pVU - 128);
+        *pVU = wdrMin(V + 128, 255);
+        pVU++;
+        INT32 U = gain * (*pVU - 128);
+        *pVU = wdrMin(U + 128, 255);
+        pVU++;
+      }
+#endif
     }
   }
 
@@ -269,7 +272,7 @@ void wdrBase::toneMappingUneven() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = (int)blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut[indexY][indexX];
+      int finalPixel = mToneMapLut[0][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
     }
@@ -314,7 +317,7 @@ void wdrBase::toneMappingEven() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = (int)blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      int finalPixel = mToneMapLut2[indexY][indexX];
+      int finalPixel = mToneMapLut[1][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
     }
@@ -334,7 +337,7 @@ void wdrBase::toneMappingThread1() {
   pVU = mSrcImage + nCols * nRows;
 #endif
 
-  UINT32 yLimit = nRows / 4;
+  UINT32 yLimit = nRows / (__global_thNums + 1);
   for (y = 0; y < yLimit; y++) {
     for (x = 0; x < nCols; x++) {
 
@@ -360,18 +363,20 @@ void wdrBase::toneMappingThread1() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      INT32 finalPixel = mToneMapLut[indexY][indexX];
+      INT32 finalPixel = mToneMapLut[0][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut[indexY][indexX];
+        float gain = mGainLut[0][indexY][indexX];
         INT32 V = gain * (*pVU - 128);
-        *pVU = wdrMin(V + 128, 255);
+        // *pVU = wdrMin(V + 128, 255);
+        *pVU = wdrClip(V + 128, 0, 255);
         pVU++;
         INT32 U = gain * (*pVU - 128);
-        *pVU = wdrMin(U + 128, 255);
+        // *pVU = wdrMin(U + 128, 255);
+        *pVU = wdrClip(U + 128, 0, 255);
         pVU++;
       }
 #endif
@@ -385,14 +390,19 @@ void wdrBase::toneMappingThread2() {
   INT32 x = 0, y = 0;
   UINT8 *pGray = NULL;
   UINT32 blockAvgLumi = 0;
-  UINT32 *pIntegral = mIntegralImage + nCols * nRows / 4;
-  pGray = mSrcImage + nCols * nRows / 4;
+  UINT32 *pIntegral =
+      mIntegralImage + UINT32(nCols * nRows / (__global_thNums + 1));
+  pGray = mSrcImage + UINT32(nCols * nRows / (__global_thNums + 1));
+
 #ifdef _VU_
   UINT8 *pVU = NULL;
-  pVU = mSrcImage + nCols * nRows * 9 / 8;
+  float rate = (1.0f / 2 * (1.0f / (__global_thNums + 1))) + 1;
+  UINT32 offset = rate * nCols * nRows;
+  pVU = mSrcImage + offset;
 #endif
 
-  UINT32 yLimit = nRows / 4;
+  UINT32 yLimit = nRows / (__global_thNums + 1);
+  // UINT32 yLimit = nRows / 4;
   for (y = 0; y < yLimit; y++) {
     for (x = 0; x < nCols; x++) {
 
@@ -418,17 +428,19 @@ void wdrBase::toneMappingThread2() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      INT32 finalPixel = mToneMapLut2[indexY][indexX];
+      INT32 finalPixel = mToneMapLut[1][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut2[indexY][indexX];
+        float gain = mGainLut[1][indexY][indexX];
         INT32 V = gain * (*pVU - 128);
-        *pVU = wdrMin(V + 128, 255);
+        // *pVU = wdrMin(V + 128, 255);
+        *pVU = wdrClip(V + 128, 0, 255);
         pVU++;
         INT32 U = gain * (*pVU - 128);
-        *pVU = wdrMin(U + 128, 255);
+        // *pVU = wdrMin(U + 128, 255);
+        *pVU = wdrClip(U + 128, 0, 255);
         pVU++;
       }
 #endif
@@ -442,14 +454,20 @@ void wdrBase::toneMappingThread3() {
   INT32 x = 0, y = 0;
   UINT8 *pGray = NULL;
   UINT32 blockAvgLumi = 0;
-  UINT32 *pIntegral = mIntegralImage + nCols * nRows / 2;
-  pGray = mSrcImage + nCols * nRows / 2;
+
+  UINT32 *pIntegral =
+      mIntegralImage + UINT32(nCols * nRows * 2 / (__global_thNums + 1.0f));
+  pGray = mSrcImage + UINT32(nCols * nRows * 2 / (__global_thNums + 1.0f));
 #ifdef _VU_
+
   UINT8 *pVU = NULL;
-  pVU = mSrcImage + nCols * nRows * 5 / 4;
+  float rate = (1.0f / 2 * (2.0f / (__global_thNums + 1.0f))) + 1;
+  UINT32 offset = rate * nCols * nRows;
+  pVU = mSrcImage + offset;
 #endif
 
-  UINT32 yLimit = nRows / 4;
+  UINT32 yLimit = nRows / (__global_thNums + 1);
+  // UINT32 yLimit = nRows / 4;
   for (y = 0; y < yLimit; y++) {
     for (x = 0; x < nCols; x++) {
 
@@ -475,17 +493,19 @@ void wdrBase::toneMappingThread3() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      INT32 finalPixel = mToneMapLut3[indexY][indexX];
+      INT32 finalPixel = mToneMapLut[2][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut3[indexY][indexX];
+        float gain = mGainLut[2][indexY][indexX];
         INT32 V = gain * (*pVU - 128);
-        *pVU = wdrMin(V + 128, 255);
+        // *pVU = wdrMin(V + 128, 255);
+        *pVU = wdrClip(V + 128, 0, 255);
         pVU++;
         INT32 U = gain * (*pVU - 128);
-        *pVU = wdrMin(U + 128, 255);
+        // *pVU = wdrMin(U + 128, 255);
+        *pVU = wdrClip(U + 128, 0, 255);
         pVU++;
       }
 #endif
@@ -499,14 +519,19 @@ void wdrBase::toneMappingThread4() {
   INT32 x = 0, y = 0;
   UINT8 *pGray = NULL;
   UINT32 blockAvgLumi = 0;
-  UINT32 *pIntegral = mIntegralImage + nCols * nRows * 3 / 4;
-  pGray = mSrcImage + nCols * nRows * 3 / 4;
+  UINT32 *pIntegral = mIntegralImage + UINT32(nCols * nRows * __global_thNums /
+                                              (__global_thNums + 1.0f));
+  pGray = mSrcImage +
+          UINT32(nCols * nRows * __global_thNums / (__global_thNums + 1.0f));
 #ifdef _VU_
   UINT8 *pVU = NULL;
-  pVU = mSrcImage + nCols * nRows * 11 / 8;
+  float rate =
+      (1.0f / 2 * (1.0f * __global_thNums / (__global_thNums + 1.0f))) + 1;
+  UINT32 offset = rate * nCols * nRows;
+  pVU = mSrcImage + offset;
 #endif
 
-  UINT32 yLimit = nRows / 4;
+  UINT32 yLimit = nRows / (__global_thNums + 1);
   for (y = 0; y < yLimit; y++) {
     for (x = 0; x < nCols; x++) {
 
@@ -532,17 +557,19 @@ void wdrBase::toneMappingThread4() {
       UINT32 offsetGray = y * nCols + x;
       UINT32 indexX = blockAvgLumi;
       UINT32 indexY = *(pGray + offsetGray);
-      INT32 finalPixel = mToneMapLut4[indexY][indexX];
+      INT32 finalPixel = mToneMapLut[__global_thNums][indexY][indexX];
       UINT32 curPixel = wdrMin(finalPixel, 255);
       *(pGray + offsetGray) = curPixel;
 #ifdef _VU_
       if (0x1 & y && 0x1 & x) {
-        float gain = mGainLut4[indexY][indexX];
+        float gain = mGainLut[__global_thNums][indexY][indexX];
         INT32 V = gain * (*pVU - 128);
-        *pVU = wdrMin(V + 128, 255);
+        // *pVU = wdrMin(V + 128, 255);
+        *pVU = wdrClip(V + 128, 0, 255);
         pVU++;
         INT32 U = gain * (*pVU - 128);
-        *pVU = wdrMin(U + 128, 255);
+        // *pVU = wdrMin(U + 128, 255);
+        *pVU = wdrClip(U + 128, 0, 255);
         pVU++;
       }
 #endif
@@ -550,24 +577,19 @@ void wdrBase::toneMappingThread4() {
   }
 }
 
-void wdrBase::MutilToneMapping() {
-  thFirst = new MyThread(this);
-  thFirst->set_thread_priority(90);
-  thSecond = new MyThread(this);
-  thSecond->set_thread_priority(90);
-  thThird = new MyThread(this);
-  thThird->set_thread_priority(90);
+void wdrBase::MutilToneMapping(int thNums) {
+  this->set_thread_priority(90);
   start();
-  thFirst->start();
-  thFirst->join();
-  thSecond->start();
-  thSecond->join();
-  thThird->start();
-  thThird->join();
+  for (size_t i = 0; i < thNums; i++) {
+    mThread[i] = new MyThread(this);
+    mThread[i]->set_thread_priority(90);
+    mThread[i]->start();
+    mThread[i]->join();
+  }
 }
 
 void wdrBase::run() {
-  if (is_equals(thFirst)) {
+  if (is_equals(mThread[0])) {
 #ifdef _UP_DOWN_
     toneMappingThread1();
 #else
@@ -575,34 +597,30 @@ void wdrBase::run() {
 #endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
-    if (mSignal == 4) {
+    if (mSignal == __global_thNums + 1) {
       mSignal = 0;
       sem_post(&sem_id);
     }
     pthread_mutex_unlock(&g_mutex);
 
-  } else if (is_equals(thSecond)) {
+  } else if (is_equals(mThread[1])) {
 #ifdef _UP_DOWN_
     toneMappingThread2();
-#else
-// toneMappingEven();
 #endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
-    if (mSignal == 4) {
+    if (mSignal == __global_thNums + 1) {
       mSignal = 0;
       sem_post(&sem_id);
     }
     pthread_mutex_unlock(&g_mutex);
-  } else if (is_equals(thThird)) {
+  } else if (is_equals(mThread[2])) {
 #ifdef _UP_DOWN_
     toneMappingThread3();
-#else
-// toneMappingEven();
 #endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
-    if (mSignal == 4) {
+    if (mSignal == __global_thNums + 1) {
       mSignal = 0;
       sem_post(&sem_id);
     }
@@ -615,7 +633,7 @@ void wdrBase::run() {
 #endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
-    if (mSignal == 4) {
+    if (mSignal == __global_thNums + 1) {
       mSignal = 0;
       sem_post(&sem_id);
     }
@@ -627,23 +645,27 @@ void wdrBase::process(int data, int mode) {
   // workBegin();
   bool ret = loadData(data, mode);
   if (ret) {
+#ifdef _TIME_COUNT_
     workBegin();
+#endif
     // LOGE("WDR width = %d,height = %d", mWidth, mHeight);
     fastIntegral();
     // toneMapping();
-    MutilToneMapping();
+    MutilToneMapping(__global_thNums);
 
     UCHAR *srcData = (UCHAR *)data;
     sem_wait(&sem_id);
+#ifdef _TIME_COUNT_
     workEnd("WDR NEON");
+#endif
+#ifdef _MEMCPY_
     memcpy(srcData, mSrcImage, mWidth * mHeight * 3 / 2 * sizeof(UCHAR));
-    if (NULL != thFirst) {
-      delete thFirst;
-      thFirst = NULL;
-      delete thSecond;
-      thSecond = NULL;
-      delete thThird;
-      thThird = NULL;
+#endif
+
+    for (size_t i = 0; i < __global_thNums; i++) {
+      if (mThread[i] != NULL)
+        delete mThread[i];
+      mThread[i] = NULL;
     }
     // workEnd("WDR NEON");
     // if (mode == WDR_INPUT_YUV) {
