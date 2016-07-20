@@ -38,7 +38,7 @@ wdrBase::wdrBase() {
   mHeight = 0;
   mBlkSize = 31;
   mGainOffset = __global_GainOffset;
-  // mVuGainOffset = __global_VuGainOffset;
+  mVuGainOffset = __global_VuGainOffset;
   mIntegralImage = NULL;
   mSrcData = NULL;
   mSrcImage = NULL;
@@ -66,7 +66,7 @@ wdrBase::wdrBase() {
       }
 #ifdef _VU_
       float vuGain =
-          (1 + lumiBlk * lumiPixel) / (lumiBlk + lumiPixel + mGainOffset);
+          (1 + lumiBlk * lumiPixel) / (lumiBlk + lumiPixel + mVuGainOffset);
       for (int i = 0; i < __global_thNums + 1; i++) {
         mGainLut[i][y][x] = vuGain;
       }

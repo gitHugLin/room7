@@ -35,7 +35,7 @@ namespace wdr {
 // 亮度通道的gain值偏移量 0~1
 #define __global_GainOffset 0.3
 // UV通道的gain值偏移量 0~1
-// #define __global_VuGainOffset 0.3
+#define __global_VuGainOffset 0.5
 
 //__global_thNums 为子线程数，不包括主线程
 //__global_thNums 必须大于等于 1 小于等于 3
@@ -86,7 +86,7 @@ private:
   UINT32 mHeight;
   INT32 mBlkSize;
   float mGainOffset;
-  // float mVuGainOffset;
+  float mVuGainOffset;
   bool mInitialized;
 
 private:
