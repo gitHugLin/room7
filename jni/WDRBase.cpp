@@ -95,11 +95,12 @@ wdrBase::~wdrBase() {
   }
   pthread_mutex_destroy(&g_mutex);
   sem_destroy(&sem_id);
+  LOGE("~wdrBase");
 }
 
 bool wdrBase::initialize(int width, int height) {
   if (mInitialized) {
-    LOGD("WDR module initialized before");
+    LOGE("WDR: module has been initialized before!");
     return false;
   }
   mWidth = width;
@@ -116,6 +117,10 @@ bool wdrBase::loadData(int data, int mode, string imagePath) {
   case WDR_INPUT_STREAM: {
     // LOGE("WDR mode is loading Data!");
     UCHAR *srcData = (UCHAR *)data;
+    if (NULL == srcData) {
+      LOGE("WDR: the input address is not available!");
+      return false;
+    }
 #ifdef _MEMCPY_
     memcpy(mSrcData, srcData, mWidth * mHeight * 3 / 2 * sizeof(UCHAR));
     // mSrcImage = (UCHAR *)data;
@@ -616,7 +621,7 @@ void wdrBase::run() {
     pthread_mutex_unlock(&g_mutex);
   } else if (is_equals(mThread[2])) {
 #ifdef _UP_DOWN_
-    toneMappingThread3();
+    //toneMappingThread3();
 #endif
     pthread_mutex_lock(&g_mutex);
     mSignal++;
@@ -627,7 +632,7 @@ void wdrBase::run() {
     pthread_mutex_unlock(&g_mutex);
   } else if (is_equals(this)) {
 #ifdef _UP_DOWN_
-    toneMappingThread4();
+    //toneMappingThread4();
 #else
     toneMappingEven();
 #endif
@@ -643,6 +648,10 @@ void wdrBase::run() {
 
 void wdrBase::process(int data, int mode) {
   // workBegin();
+  if (!mInitialized) {
+    LOGE("WDR-process: module has been initialized before!");
+    return;
+  }
   bool ret = loadData(data, mode);
   if (ret) {
 #ifdef _TIME_COUNT_
@@ -672,5 +681,7 @@ void wdrBase::process(int data, int mode) {
     //   YV12ToBGR24_OpenCV(mSrcImage, mWidth, mHeight,
     //   "/data/local/WDRBase.jpg");
     // }
+  } else {
+    LOGE("WDR:something wrong while loadData!");
   }
 }

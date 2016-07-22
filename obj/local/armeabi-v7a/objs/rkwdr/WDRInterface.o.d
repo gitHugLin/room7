@@ -1,5 +1,5 @@
 obj/local/armeabi-v7a/objs/rkwdr/WDRInterface.o: jni/WDRInterface.cpp \
- jni/WDRBase.h jni/MyThread.h \
+ jni/WDRInterface.h jni/WDRBase.h jni/MyThread.h \
  /Users/linqi/Library/Android/sdk/ndk-bundle/sources/cxx-stl/gnu-libstdc++/4.9/include/iostream \
  jni/log.h \
  /Users/linqi/SDKDir/OpenCV-android-sdk/sdk/native/jni/include/opencv2/opencv.hpp \
@@ -62,8 +62,9 @@ obj/local/armeabi-v7a/objs/rkwdr/WDRInterface.o: jni/WDRInterface.cpp \
  /Users/linqi/SDKDir/OpenCV-android-sdk/sdk/native/jni/include/opencv2/imgcodecs/imgcodecs_c.h \
  /Users/linqi/SDKDir/OpenCV-android-sdk/sdk/native/jni/include/opencv2/videoio/videoio_c.h \
  /Users/linqi/SDKDir/OpenCV-android-sdk/sdk/native/jni/include/opencv2/ml.hpp \
- /Users/linqi/Library/Android/sdk/ndk-bundle/sources/cxx-stl/gnu-libstdc++/4.9/include/map \
- jni/WDRInterface.h
+ /Users/linqi/Library/Android/sdk/ndk-bundle/sources/cxx-stl/gnu-libstdc++/4.9/include/map
+
+jni/WDRInterface.h:
 
 jni/WDRBase.h:
 
@@ -194,5 +195,3 @@ jni/log.h:
 /Users/linqi/SDKDir/OpenCV-android-sdk/sdk/native/jni/include/opencv2/ml.hpp:
 
 /Users/linqi/Library/Android/sdk/ndk-bundle/sources/cxx-stl/gnu-libstdc++/4.9/include/map:
-
-jni/WDRInterface.h:
